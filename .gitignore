@@ -1,0 +1,88 @@
+################################################################################
+# .NET / MAUI + Rider (macOS) gitignore
+# Repo layout: GarminPartner (MAUI app) + GarminPartner.Core (class library)
+################################################################################
+
+# ----------------------------
+# OS / tooling noise (macOS)
+# ----------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ----------------------------
+# JetBrains Rider / IntelliJ
+# ----------------------------
+.idea/
+*.sln.iml
+*.DotSettings.user
+*.DotSettings
+*.DotSettings.user.*
+**/.fleet/
+**/.run/
+
+# Rider cache / local history (may appear depending on settings)
+**/.idea_modules/
+**/.localhistory/
+
+# ----------------------------
+# Visual Studio / MSBuild
+# ----------------------------
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+
+# MSBuild structured logs
+*.binlog
+
+# ----------------------------
+# .NET build output
+# ----------------------------
+**/bin/
+**/obj/
+**/TestResults/
+**/artifacts/
+**/*.nupkg
+**/*.snupkg
+
+# Publish output folders (common conventions)
+**/publish/
+**/app.publish/
+
+# ----------------------------
+# MAUI / Xamarin / Mobile
+# ----------------------------
+# Generated platform folders (MAUI single-project)
+**/Platforms/**/bin/
+**/Platforms/**/obj/
+
+# Android
+**/*.apk
+**/*.aab
+**/*.keystore
+**/*.jks
+**/*AndroidSigning*.json
+**/android.keystore
+
+# iOS / MacCatalyst / Xcode
+**/*.app
+**/*.ipa
+**/*.dSYM/
+**/*.dSYM.zip
+**/*.xcarchive/
+**/*.xcuserstate
+**/*.xcuserdata/
+**/DerivedData/
+
+# Crash / diagnostic logs
+*.crash
+*.stackdump

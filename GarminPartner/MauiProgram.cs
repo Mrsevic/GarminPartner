@@ -1,5 +1,4 @@
 ﻿using GarminPartner.Core.Services;
-using GarminPartner.Pages;
 using Microsoft.Extensions.Logging;
 
 namespace GarminPartner;

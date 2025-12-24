@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="GarminPartner.LoginPage"
+             Title="Garmin Login"
+             BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Black}}">
+
+    <ScrollView>
+        <VerticalStackLayout Spacing="25" Padding="30" VerticalOptions="Center">
+            
+            <!-- Header -->
+            <Image Source="garmin_logo.png" 
+                   HeightRequest="60" 
+                   HorizontalOptions="Center" 
+                   Margin="0,0,0,20"/>
+
+            <Label Text="Sign In" 
+                   FontSize="28" 
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center"
+                   TextColor="{AppThemeBinding Light={StaticResource Black}, Dark={StaticResource White}}" />
+            
+            <Label Text="Use your Garmin Connect credentials" 
+                   FontSize="14" 
+                   HorizontalOptions="Center"
+                   TextColor="Gray" 
+                   Margin="0,-15,0,0"/>
+
+            <!-- Form -->
+            <Frame BorderColor="LightGray" CornerRadius="10" Padding="0" HasShadow="False">
+                <Entry x:Name="EmailEntry"
+                       Placeholder="Email"
+                       Keyboard="Email"
+                       ReturnType="Next"
+                       HeightRequest="50"
+                       Margin="15,0"
+                       ClearButtonVisibility="WhileEditing"
+                       AutomationId="email" /> 
+            </Frame>
+
+            <Frame BorderColor="LightGray" CornerRadius="10" Padding="0" HasShadow="False">
+                <Entry x:Name="PasswordEntry"
+                       Placeholder="Password"
+                       IsPassword="True"
+                       ReturnType="Done"
+                       HeightRequest="50"
+                       Margin="15,0"
+                       AutomationId="password" />
+            </Frame>
+
+            <!-- Login Button -->
+            <Button x:Name="LoginButton"
+                    Text="Sign In"
+                    Clicked="OnLoginClicked"
+                    HeightRequest="50"
+                    CornerRadius="25"
+                    FontAttributes="Bold"
+                    BackgroundColor="#007AFF"
+                    TextColor="White"/>
+
+            <!-- Status & Loading -->
+            <ActivityIndicator x:Name="LoadingIndicator"
+                               IsRunning="False"
+                               IsVisible="False"
+                               Color="#007AFF"
+                               HorizontalOptions="Center"/>
+
+            <Label x:Name="StatusLabel"
+                   FontSize="14"
+                   HorizontalOptions="Center"
+                   HorizontalTextAlignment="Center"
+                   TextColor="#FF3B30" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

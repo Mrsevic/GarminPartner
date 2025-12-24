@@ -1,4 +1,6 @@
-﻿using GarminPartner.Core.Services;
+﻿using Dynastream.Fit;
+using GarminPartner.Core.Services;
+// For Intensity and enums
 
 namespace GarminPartner;
 
@@ -7,80 +9,114 @@ public partial class MainPage : ContentPage
     private readonly GarminAuthService _authService;
     private readonly GarminWorkoutService _workoutService;
 
-    public MainPage(GarminAuthService authService, GarminWorkoutService workoutService)
+    public MainPage(GarminAuthService authService)
     {
         InitializeComponent();
         _authService = authService;
-        _workoutService = workoutService;
+        _workoutService = new GarminWorkoutService(_authService);
+    }
+
+    // Fallback constructor
+    public MainPage() : this(new GarminAuthService())
+    {
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+        await CheckAuthStatus();
+    }
+
+    private async Task CheckAuthStatus()
+    {
+        // Check if we have a valid client (this will try to refresh token if needed)
+        var client = await _authService.GetAuthenticatedClientAsync();
         
-        var authData = await _authService.GetValidAuthAsync();
-        if (authData == null)
+        if (client != null && client.IsOAuthValid)
         {
-            await Shell.Current.GoToAsync("//LoginPage");
+            StatusDot.Fill = Colors.Green;
+            ConnectionStatusLabel.Text = "Connected to Garmin";
+            UploadButton.IsEnabled = true;
+            LogoutButton.IsVisible = true;
         }
         else
         {
-            StatusLabel.Text = "✅ Connected to Garmin";
-        }
-    }
-
-    private async void OnSendSimpleWorkoutClicked(object sender, EventArgs e)
-    {
-        LoadingIndicator.IsVisible = true;
-        LoadingIndicator.IsRunning = true;
-        StatusLabel.Text = "📤 Sending workout to Garmin...";
-
-        try
-        {
-            var success = await _workoutService.SendSimpleRunWorkoutAsync();
+            StatusDot.Fill = Colors.Red;
+            ConnectionStatusLabel.Text = "Disconnected";
+            UploadButton.IsEnabled = false;
+            LogoutButton.IsVisible = false;
             
-            if (success)
-            {
-                StatusLabel.Text = "✅ Workout sent successfully!";
-                await DisplayAlertAsync("Success", "Your workout has been uploaded to Garmin Connect!", "OK");
-            }
-            else
-            {
-                StatusLabel.Text = "❌ Failed to send workout";
-                await DisplayAlertAsync("Error", "Could not upload workout. Please try again.", "OK");
-            }
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Not authenticated"))
-        {
-            StatusLabel.Text = "❌ Session expired";
-            await DisplayAlertAsync("Session Expired", "Please login again.", "OK");
-            await Shell.Current.GoToAsync("//LoginPage");
-        }
-        catch (Exception ex)
-        {
-            StatusLabel.Text = "❌ Error occurred";
-            await DisplayAlertAsync("Error", ex.Message, "OK");
-        }
-        finally
-        {
-            LoadingIndicator.IsVisible = false;
-            LoadingIndicator.IsRunning = false;
+            // Redirect to login if not authenticated
+            Application.Current.MainPage = new LoginPage(_authService);
         }
     }
 
-    private async void OnCreateCustomWorkoutClicked(object sender, EventArgs e)
+    private async void OnUploadWorkoutClicked(object sender, EventArgs e)
     {
-        await DisplayAlertAsync("Coming Soon", "Custom workout builder will be available in the next version!", "OK");
+        LoadingOverlay.IsVisible = true;
+        LogLabel.Text = "Preparing workout file...";
+
+        // Define the workout
+        var workout = new WorkoutPlan
+        {
+            Name = "Easy 5K Run",
+            Steps = new List<WorkoutStep>
+            {
+                new WorkoutStep
+                {
+                    Name = "Warm Up",
+                    DurationType = WktStepDuration.Time,
+                    DurationValue = 300, // 5 minutes
+                    TargetType = WktStepTarget.HeartRate,
+                    TargetValue = 120,
+                    Intensity = Intensity.Warmup
+                },
+                new WorkoutStep
+                {
+                    Name = "Run",
+                    DurationType = WktStepDuration.Distance,
+                    DurationValue = 5000, // 5000m
+                    TargetType = WktStepTarget.Speed,
+                    TargetValue = 12000, // 12 km/h (units depend on SDK, usually mm/s or m/s)
+                    Intensity = Intensity.Active
+                },
+                new WorkoutStep
+                {
+                    Name = "Cool Down",
+                    DurationType = WktStepDuration.Time,
+                    DurationValue = 300,
+                    TargetType = WktStepTarget.Open,
+                    TargetValue = 0,
+                    Intensity = Intensity.Cooldown
+                }
+            }
+        };
+
+        LogLabel.Text = "Uploading to Garmin Connect...";
+        
+        var result = await _workoutService.UploadWorkoutAsync(workout);
+
+        LoadingOverlay.IsVisible = false;
+
+        if (result.IsSuccess)
+        {
+            LogLabel.Text = $"Success! {result.Message}";
+            await DisplayAlert("Upload Complete", "Workout sent to Garmin Connect. Sync your watch to see it.", "OK");
+        }
+        else
+        {
+            LogLabel.Text = $"Error: {result.Message}";
+            await DisplayAlert("Upload Failed", result.Message, "OK");
+        }
     }
+
     private async void OnLogoutClicked(object sender, EventArgs e)
     {
-        var confirm = await DisplayAlertAsync("Logout", "Are you sure you want to logout?", "Yes", "No");
-    
+        bool confirm = await DisplayAlert("Sign Out", "Are you sure you want to sign out?", "Yes", "No");
         if (confirm)
         {
-            await _authService.ClearAuthAsync();  // Changed from ClearAuth() to ClearAuthAsync()
-            StatusLabel.Text = "Logged out";
-            await Shell.Current.GoToAsync("//LoginPage");
+            await _authService.ClearAuthAsync();
+            Application.Current.MainPage = new LoginPage(_authService);
         }
     }
 }

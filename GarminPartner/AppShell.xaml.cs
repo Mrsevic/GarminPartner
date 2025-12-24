@@ -1,6 +1,4 @@
-﻿using GarminPartner.Pages;
-
-namespace GarminPartner;
+﻿namespace GarminPartner;
 
 public partial class AppShell : Shell
 {

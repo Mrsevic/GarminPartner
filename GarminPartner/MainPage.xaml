@@ -2,63 +2,61 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="GarminPartner.MainPage"
-             Title="Workouts">
-    <ScrollView>
-        <VerticalStackLayout Padding="20" Spacing="20">
-            <Label Text="🏃 Your Workouts"
-                   FontSize="28"
-                   FontAttributes="Bold"
-                   Margin="0,20,0,10"/>
+             Title="Workout Manager"
+             BackgroundColor="{AppThemeBinding Light=#F2F2F7, Dark=Black}">
 
-            <Label x:Name="StatusLabel"
-                   FontSize="14"
-                   TextColor="{StaticResource Tertiary}"/>
+    <Grid RowDefinitions="Auto,*">
+        
+        <!-- Header / Status Bar -->
+        <Frame Grid.Row="0" BackgroundColor="White" Padding="15" Margin="10,10,10,0" CornerRadius="10" HasShadow="True">
+            <HorizontalStackLayout Spacing="10" VerticalOptions="Center">
+                <Ellipse x:Name="StatusDot" WidthRequest="12" HeightRequest="12" Fill="Gray" VerticalOptions="Center"/>
+                <Label x:Name="ConnectionStatusLabel" Text="Not Connected" VerticalOptions="Center" FontAttributes="Bold"/>
+                <Button x:Name="LogoutButton" Text="Sign Out" Clicked="OnLogoutClicked" 
+                        HeightRequest="30" Padding="10,0" FontSize="12" HorizontalOptions="EndAndExpand"/>
+            </HorizontalStackLayout>
+        </Frame>
 
-            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
-                   CornerRadius="10"
-                   Padding="20">
-                <VerticalStackLayout Spacing="15">
-                    <Label Text="Quick Actions"
-                           FontSize="18"
-                           FontAttributes="Bold"/>
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="20" Padding="20">
 
-                    <Button Text="📤 Send Simple 5K Run"
-                            Clicked="OnSendSimpleWorkoutClicked"
-                            BackgroundColor="{StaticResource Primary}"
-                            TextColor="White"
-                            HeightRequest="50"
-                            CornerRadius="10"/>
+                <!-- Workout Card -->
+                <Frame BackgroundColor="White" CornerRadius="15" HasShadow="True">
+                    <VerticalStackLayout Spacing="15">
+                        <Label Text="Today's Workout" FontSize="20" FontAttributes="Bold" TextColor="Black"/>
+                        
+                        <Label Text="Easy 5K Run" FontSize="18" TextColor="#007AFF"/>
+                        
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="• Warm Up: 5 min @ 120 bpm" TextColor="Gray"/>
+                            <Label Text="• Run: 5 km @ 12 km/h" TextColor="Gray"/>
+                            <Label Text="• Cool Down: 5 min" TextColor="Gray"/>
+                        </VerticalStackLayout>
 
-                    <Button Text="🔧 Create Custom Workout"
-                            Clicked="OnCreateCustomWorkoutClicked"
-                            BackgroundColor="{StaticResource Secondary}"
-                            TextColor="White"
-                            HeightRequest="50"
-                            CornerRadius="10"/>
-                </VerticalStackLayout>
-            </Frame>
+                        <Button x:Name="UploadButton"
+                                Text="Send to Watch"
+                                Clicked="OnUploadWorkoutClicked"
+                                BackgroundColor="#007AFF"
+                                TextColor="White"
+                                CornerRadius="20"
+                                HeightRequest="44"
+                                Margin="0,10,0,0"/>
+                    </VerticalStackLayout>
+                </Frame>
 
-            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
-                   CornerRadius="10"
-                   Padding="20">
-                <VerticalStackLayout Spacing="15">
-                    <Label Text="Account"
-                           FontSize="18"
-                           FontAttributes="Bold"/>
+                <!-- Status Log -->
+                <Label Text="Activity Log" FontSize="14" FontAttributes="Bold" Margin="5,10,0,0"/>
+                <Frame BackgroundColor="#F0F0F0" CornerRadius="10" Padding="15">
+                    <Label x:Name="LogLabel" Text="Ready to upload." FontSize="12" TextColor="#333"/>
+                </Frame>
 
-                    <Button Text="🚪 Logout"
-                            Clicked="OnLogoutClicked"
-                            BackgroundColor="{StaticResource Tertiary}"
-                            TextColor="White"
-                            HeightRequest="50"
-                            CornerRadius="10"/>
-                </VerticalStackLayout>
-            </Frame>
+            </VerticalStackLayout>
+        </ScrollView>
+        
+        <!-- Loading Overlay -->
+        <Grid x:Name="LoadingOverlay" Grid.RowSpan="2" BackgroundColor="#80000000" IsVisible="False">
+            <ActivityIndicator IsRunning="True" Color="White" VerticalOptions="Center" HorizontalOptions="Center"/>
+        </Grid>
+    </Grid>
 
-            <ActivityIndicator x:Name="LoadingIndicator"
-                             IsRunning="False"
-                             IsVisible="False"
-                             Color="{StaticResource Primary}"/>
-        </VerticalStackLayout>
-    </ScrollView>
 </ContentPage>

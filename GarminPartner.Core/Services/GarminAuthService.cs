@@ -1,234 +1,179 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Maui.Storage;
+using YetAnotherGarminConnectClient;
 
 namespace GarminPartner.Core.Services;
 
 public class GarminAuthService
 {
-    private readonly HttpClient _httpClient;
-    private readonly CookieContainer _cookieContainer;
+    // Garmin's public OAuth 1.0a consumer credentials
+    private const string ConsumerKey = "fc3e99d2-118c-44b8-8ae3-03370dde24c0";
+    private const string ConsumerSecret = "E08WAR897WEy2knn7aFBrvegVAf0AFdWBBF";
+    private const string AuthStorageKey = "garmin_auth_credentials";
+    
+    private IGarminClientFacade? _clientFacade;
+    private string? _currentEmail;
+    private string? _currentPassword;
 
-    private const string SsoUrl = "https://sso.garmin.com";
-    private const string GarminConnectUrl = "https://connect.garmin.com";
-    private const string PortalLoginUrl = "https://sso.garmin.com/portal/api/login";
-    private const string SsoLoginUrl = "https://sso.garmin.com/sso/login";
-    private const string AuthStorageKey = "garmin_auth_data";
+    public bool IsAuthenticated => _clientFacade?.IsOAuthValid ?? false;
 
-    public GarminAuthService()
-    {
-        _cookieContainer = new CookieContainer();
-
-        var handler = new HttpClientHandler
-        {
-            UseCookies = true,
-            CookieContainer = _cookieContainer,
-            AutomaticDecompression = DecompressionMethods.All
-        };
-
-        _httpClient = new HttpClient(handler);
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
-    }
-
-    public async Task<AuthData?> GetValidAuthAsync()
-    {
-        var stored = await LoadStoredAuthAsync();
-
-        if (stored != null && IsTokenValid(stored))
-        {
-            return stored;
-        }
-
-        return null;
-    }
-
-    public async Task<AuthData?> AuthenticateAsync(string email, string password)
+    public async Task<AuthResult> AuthenticateAsync(string email, string password)
     {
         try
         {
-            // Step 1: Login via Portal API and get auth ticket
-            var authTicketUrl = await LoginAsync(email, password);
-            if (string.IsNullOrEmpty(authTicketUrl))
+            // Store credentials for re-authentication
+            _currentEmail = email;
+            _currentPassword = password;
+
+            // Create client and wrap in facade
+            var client = ClientFactory.Create(ConsumerKey, ConsumerSecret);
+            _clientFacade = new GarminClientFacade(client);
+            
+            // Authenticate
+            var authResult = await _clientFacade.Authenticate(email, password);
+
+            if (!authResult.IsSuccess)
             {
-                throw new Exception("Failed to obtain authentication ticket");
+                return new AuthResult 
+                { 
+                    IsSuccess = false,
+                    RequiresMFA = authResult.MFACodeRequested,
+                    Message = authResult.MFACodeRequested ? "MFA code required" : "Authentication failed"
+                };
             }
 
-            // Step 2: Claim the auth ticket
-            await ClaimAuthTicketAsync(authTicketUrl);
-
-            // Step 3: Touch base with main page to complete login ceremony
-            await _httpClient.GetAsync($"{GarminConnectUrl}/modern");
-
-            // Step 4: Set NK header for subsequent requests
-            _httpClient.DefaultRequestHeaders.Remove("NK");
-            _httpClient.DefaultRequestHeaders.Add("NK", "NT");
-
-            // Step 5: Get OAuth token
-            var authToken = await GetOAuthTokenAsync();
-            if (authToken == null)
+            // Check if OAuth2 token is valid
+            if (!_clientFacade.IsOAuthValid)
             {
-                throw new Exception("Failed to obtain OAuth token");
+                return new AuthResult 
+                { 
+                    IsSuccess = false,
+                    Message = "Failed to obtain valid OAuth token"
+                };
             }
 
-            var authData = new AuthData
-            {
-                AccessToken = authToken.AccessToken,
-                TokenType = authToken.TokenType,
-                ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(authToken.ExpiresIn).ToUnixTimeSeconds(),
-                IssuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            // Store credentials securely
+            await StoreCredentialsAsync(email, password);
+
+            return new AuthResult 
+            { 
+                IsSuccess = true,
+                Message = "Authentication successful"
             };
-
-            await StoreAuthAsync(authData);
-            return authData;
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Authentication failed: {ex.Message}", ex);
+            return new AuthResult 
+            { 
+                IsSuccess = false,
+                Message = $"Authentication error: {ex.Message}"
+            };
         }
     }
 
-    private async Task<string> LoginAsync(string username, string password)
+    public async Task<AuthResult> CompleteMFAAsync(string mfaCode)
     {
-        var headers = new Dictionary<string, string>
+        try
         {
-            { "authority", "sso.garmin.com" },
-            { "origin", SsoUrl },
+            if (_clientFacade == null)
             {
-                "referer",
-                $"{SsoUrl}/portal/sso/en-US/sign-in?clientId=GarminConnect&service=https%3A%2F%2Fconnect.garmin.com%2Fmodern"
+                return new AuthResult 
+                { 
+                    IsSuccess = false,
+                    Message = "No authentication session found"
+                };
             }
-        };
 
-        foreach (var header in headers)
-        {
-            _httpClient.DefaultRequestHeaders.Remove(header.Key);
-            _httpClient.DefaultRequestHeaders.Add(header.Key, header.Value);
+            var authResult = await _clientFacade.CompleteMFAAuthAsync(mfaCode);
+
+            if (!authResult.IsSuccess)
+            {
+                return new AuthResult 
+                { 
+                    IsSuccess = false,
+                    Message = "MFA verification failed"
+                };
+            }
+
+            if (!_clientFacade.IsOAuthValid)
+            {
+                return new AuthResult 
+                { 
+                    IsSuccess = false,
+                    Message = "Failed to obtain valid OAuth token"
+                };
+            }
+
+            // Store credentials for future re-authentication
+            if (!string.IsNullOrEmpty(_currentEmail) && !string.IsNullOrEmpty(_currentPassword))
+            {
+                await StoreCredentialsAsync(_currentEmail, _currentPassword);
+            }
+
+            return new AuthResult 
+            { 
+                IsSuccess = true,
+                Message = "MFA verification successful"
+            };
         }
-
-        var queryParams = new Dictionary<string, string>
+        catch (Exception ex)
         {
-            { "clientId", "GarminConnect" },
-            { "service", $"{GarminConnectUrl}/modern/" },
-            { "gauthHost", $"{SsoUrl}/sso" }
-        };
-
-        var loginData = new
-        {
-            username = username,
-            password = password
-        };
-
-        var queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
-        var loginUrl = $"{PortalLoginUrl}?{queryString}";
-
-        var jsonContent = new StringContent(
-            JsonSerializer.Serialize(loginData),
-            Encoding.UTF8,
-            "application/json");
-
-        var response = await _httpClient.PostAsync(loginUrl, jsonContent);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorContent = await response.Content.ReadAsStringAsync();
-            throw new Exception($"Login failed with status {response.StatusCode}: {errorContent}");
+            return new AuthResult 
+            { 
+                IsSuccess = false,
+                Message = $"MFA error: {ex.Message}"
+            };
         }
-
-        var responseText = await response.Content.ReadAsStringAsync();
-
-        var jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        var loginResponse = JsonSerializer.Deserialize<LoginResponse>(responseText, jsonOptions);
-
-        if (loginResponse?.ResponseStatus?.Type == "INVALID_USERNAME_PASSWORD")
-        {
-            throw new Exception("Invalid username or password");
-        }
-
-        var serviceUrl = loginResponse?.ServiceURL?.TrimEnd('/');
-        var authTicket = loginResponse?.ServiceTicketId;
-
-        if (string.IsNullOrEmpty(serviceUrl) || string.IsNullOrEmpty(authTicket))
-        {
-            throw new Exception("Failed to extract authentication ticket from response");
-        }
-
-        return $"{serviceUrl}?ticket={authTicket}";
     }
 
-    private async Task ClaimAuthTicketAsync(string authTicketUrl)
+    public async Task<IGarminClientFacade?> GetAuthenticatedClientAsync()
     {
-        // First, bump the login URL
-        var loginParams = new Dictionary<string, string>
+        // If we have a valid client, return it
+        if (_clientFacade != null && _clientFacade.IsOAuthValid)
         {
-            { "clientId", "GarminConnect" },
-            { "service", $"{GarminConnectUrl}/modern/" },
-            { "webhost", GarminConnectUrl },
-            { "gateway", "true" },
-            { "generateExtraServiceTicket", "true" },
-            { "generateTwoExtraServiceTickets", "true" }
-        };
+            return _clientFacade;
+        }
 
-        var queryString = string.Join("&", loginParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
-        // await _httpClient.GetAsync($"{SsoLoginUrl}?{queryString}");
-
-        // Now claim the ticket
-        var response = await _httpClient.GetAsync(authTicketUrl);
-
-        if (!response.IsSuccessStatusCode)
+        // Try to re-authenticate with stored credentials
+        var credentials = await LoadCredentialsAsync();
+        
+        if (credentials == null)
         {
-            throw new Exception($"Failed to claim auth ticket: {response.StatusCode}");
+            return null;
+        }
+
+        try
+        {
+            var result = await AuthenticateAsync(credentials.Email, credentials.Password);
+            
+            if (result.IsSuccess && !result.RequiresMFA)
+            {
+                return _clientFacade;
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
-    private async Task<OAuthToken?> GetOAuthTokenAsync()
+    public IGarminClientFacade? GetCurrentClient()
     {
-        var headers = new Dictionary<string, string>
-        {
-            { "authority", "connect.garmin.com" },
-            { "origin", GarminConnectUrl },
-            { "referer", $"{GarminConnectUrl}/modern/" }
-        };
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{GarminConnectUrl}/modern/di-oauth/exchange");
-
-        foreach (var header in headers)
-        {
-            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        var response = await _httpClient.SendAsync(request);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorContent = await response.Content.ReadAsStringAsync();
-            throw new Exception($"OAuth token exchange failed: {response.StatusCode} - {errorContent}");
-        }
-
-        var tokenJson = await response.Content.ReadAsStringAsync();
-        return JsonSerializer.Deserialize<OAuthToken>(tokenJson, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        return _clientFacade?.IsOAuthValid == true ? _clientFacade : null;
     }
 
-    private bool IsTokenValid(AuthData authData)
+    public async Task ClearAuthAsync()
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var bufferSeconds = 60;
-
-        return now + bufferSeconds < authData.ExpiresAt;
+        SecureStorage.Remove(AuthStorageKey);
+        _clientFacade = null;
+        _currentEmail = null;
+        _currentPassword = null;
+        await Task.CompletedTask;
     }
 
-    private async Task<AuthData?> LoadStoredAuthAsync()
+    private async Task<StoredCredentials?> LoadCredentialsAsync()
     {
         try
         {
@@ -239,7 +184,7 @@ public class GarminAuthService
                 return null;
             }
 
-            return JsonSerializer.Deserialize<AuthData>(json);
+            return JsonSerializer.Deserialize<StoredCredentials>(json);
         }
         catch
         {
@@ -247,81 +192,35 @@ public class GarminAuthService
         }
     }
 
-    private async Task StoreAuthAsync(AuthData authData)
+    private async Task StoreCredentialsAsync(string email, string password)
     {
         try
         {
-            var json = JsonSerializer.Serialize(authData);
+            var credentials = new StoredCredentials
+            {
+                Email = email,
+                Password = password
+            };
+
+            var json = JsonSerializer.Serialize(credentials);
             await SecureStorage.SetAsync(AuthStorageKey, json);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"Failed to store auth: {ex.Message}", ex);
+            Console.WriteLine($"Failed to store credentials: {ex.Message}");
         }
     }
-
-    public async Task ClearAuthAsync()
-    {
-        try
-        {
-            SecureStorage.Remove(AuthStorageKey);
-            await Task.CompletedTask;
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"Failed to clear auth: {ex.Message}", ex);
-        }
-    }
-
-    public HttpClient GetAuthenticatedClient(AuthData authData)
-    {
-        var client = new HttpClient();
-        client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue(authData.TokenType, authData.AccessToken);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
-        client.DefaultRequestHeaders.Add("DI-Backend", "connectapi.garmin.com");
-
-        return client;
-    }
 }
 
-// Response models
-public class LoginResponse
+public class StoredCredentials
 {
-    public string? ServiceURL { get; set; }
-    public string? ServiceTicketId { get; set; }
-    public ResponseStatus? ResponseStatus { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
 }
 
-public class ResponseStatus
+public class AuthResult
 {
-    public string? Type { get; set; }
-    public string? Message { get; set; }
-    public string? HttpStatus { get; set; }
-}
-
-public class OAuthToken
-{
-    public string Scope { get; set; } = string.Empty;
-    public string Jti { get; set; } = string.Empty;
-
-    [JsonPropertyName("access_token")] public string AccessToken { get; set; } = string.Empty;
-
-    [JsonPropertyName("token_type")] public string TokenType { get; set; } = "Bearer";
-
-    [JsonPropertyName("refresh_token")] public string RefreshToken { get; set; } = string.Empty;
-
-    [JsonPropertyName("expires_in")] public int ExpiresIn { get; set; } = 3599;
-
-    [JsonPropertyName("refresh_token_expires_in")]
-    public int RefreshTokenExpiresIn { get; set; } = 7199;
-}
-
-public class AuthData
-{
-    public string AccessToken { get; set; } = string.Empty;
-    public string TokenType { get; set; } = "Bearer";
-    public long ExpiresAt { get; set; }
-    public long IssuedAt { get; set; }
+    public bool IsSuccess { get; set; }
+    public bool RequiresMFA { get; set; }
+    public string Message { get; set; } = string.Empty;
 }

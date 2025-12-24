@@ -1,6 +1,7 @@
 using System.Text.Json;
+using Garmin.Connect;
+using Garmin.Connect.Auth;
 using Microsoft.Maui.Storage;
-using YetAnotherGarminConnectClient;
 
 namespace GarminPartner.Core.Services;
 
@@ -12,35 +13,42 @@ public class GarminAuthService
     private const string AuthStorageKey = "garmin_auth_credentials";
     
     private IGarminClientFacade? _clientFacade;
-    private string? _currentEmail;
-    private string? _currentPassword;
-
-    public bool IsAuthenticated => _clientFacade?.IsOAuthValid ?? false;
+    // private string? _currentEmail;
+    // private string? _currentPassword;
+    //
+    // public bool IsAuthenticated => _clientFacade?.IsOAuthValid ?? false;
 
     public async Task<AuthResult> AuthenticateAsync(string email, string password)
     {
         try
         {
             // Store credentials for re-authentication
-            _currentEmail = email;
-            _currentPassword = password;
-
-            // Create client and wrap in facade
-            var client = ClientFactory.Create(ConsumerKey, ConsumerSecret);
-            _clientFacade = new GarminClientFacade(client);
+            // _currentEmail = email;
+            // _currentPassword = password;
             
-            // Authenticate
-            var authResult = await _clientFacade.Authenticate(email, password);
-
-            if (!authResult.IsSuccess)
+            try
             {
-                return new AuthResult 
-                { 
-                    IsSuccess = false,
-                    RequiresMFA = authResult.MFACodeRequested,
-                    Message = authResult.MFACodeRequested ? "MFA code required" : "Authentication failed"
-                };
+                // Create client and wrap in facade
+                var client = new GarminConnectClient(new GarminConnectContext(new HttpClient(), new BasicAuthParameters(email, password)));
+                _clientFacade = new GarminClientFacade(client);
             }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                // throw;
+            }
+            // Authenticate
+            // var authResult = await _clientFacade.Authenticate(email, password);
+
+            // if (!authResult.IsSuccess)
+            // {
+            //     return new AuthResult 
+            //     { 
+            //         IsSuccess = false,
+            //         RequiresMFA = authResult.MFACodeRequested,
+            //         Message = authResult.MFACodeRequested ? "MFA code required" : "Authentication failed"
+            //     };
+            // }
 
             // Check if OAuth2 token is valid
             if (!_clientFacade.IsOAuthValid)
@@ -70,66 +78,11 @@ public class GarminAuthService
             };
         }
     }
-
-    public async Task<AuthResult> CompleteMFAAsync(string mfaCode)
-    {
-        try
-        {
-            if (_clientFacade == null)
-            {
-                return new AuthResult 
-                { 
-                    IsSuccess = false,
-                    Message = "No authentication session found"
-                };
-            }
-
-            var authResult = await _clientFacade.CompleteMFAAuthAsync(mfaCode);
-
-            if (!authResult.IsSuccess)
-            {
-                return new AuthResult 
-                { 
-                    IsSuccess = false,
-                    Message = "MFA verification failed"
-                };
-            }
-
-            if (!_clientFacade.IsOAuthValid)
-            {
-                return new AuthResult 
-                { 
-                    IsSuccess = false,
-                    Message = "Failed to obtain valid OAuth token"
-                };
-            }
-
-            // Store credentials for future re-authentication
-            if (!string.IsNullOrEmpty(_currentEmail) && !string.IsNullOrEmpty(_currentPassword))
-            {
-                await StoreCredentialsAsync(_currentEmail, _currentPassword);
-            }
-
-            return new AuthResult 
-            { 
-                IsSuccess = true,
-                Message = "MFA verification successful"
-            };
-        }
-        catch (Exception ex)
-        {
-            return new AuthResult 
-            { 
-                IsSuccess = false,
-                Message = $"MFA error: {ex.Message}"
-            };
-        }
-    }
-
+    
     public async Task<IGarminClientFacade?> GetAuthenticatedClientAsync()
     {
         // If we have a valid client, return it
-        if (_clientFacade != null && _clientFacade.IsOAuthValid)
+        if (_clientFacade is { IsOAuthValid: true })
         {
             return _clientFacade;
         }
@@ -146,7 +99,7 @@ public class GarminAuthService
         {
             var result = await AuthenticateAsync(credentials.Email, credentials.Password);
             
-            if (result.IsSuccess && !result.RequiresMFA)
+            if (result is { IsSuccess: true })
             {
                 return _clientFacade;
             }
@@ -168,8 +121,8 @@ public class GarminAuthService
     {
         SecureStorage.Remove(AuthStorageKey);
         _clientFacade = null;
-        _currentEmail = null;
-        _currentPassword = null;
+        // _currentEmail = null;
+        // _currentPassword = null;
         await Task.CompletedTask;
     }
 
@@ -221,6 +174,6 @@ public class StoredCredentials
 public class AuthResult
 {
     public bool IsSuccess { get; set; }
-    public bool RequiresMFA { get; set; }
+    // public bool RequiresMFA { get; set; }
     public string Message { get; set; } = string.Empty;
 }

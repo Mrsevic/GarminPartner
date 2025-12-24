@@ -73,25 +73,7 @@ public partial class LoginPage : ContentPage
 
         var result = await _authService.AuthenticateAsync(email, password);
 
-        if (result.RequiresMFA)
-        {
-            string mfaCode = await DisplayPromptAsync("Verification Required", 
-                "Please enter the code sent to your email/device:", 
-                maxLength: 6, 
-                keyboard: Keyboard.Numeric);
-            
-            if (!string.IsNullOrWhiteSpace(mfaCode))
-            {
-                var mfaResult = await _authService.CompleteMFAAsync(mfaCode);
-                if (mfaResult.IsSuccess) await OnLoginSuccess();
-                else 
-                {
-                    StatusLabel.Text = "Verification failed";
-                    await DisplayAlert("Error", mfaResult.Message, "OK");
-                }
-            }
-        }
-        else if (result.IsSuccess)
+        if (result.IsSuccess)
         {
             await OnLoginSuccess();
         }

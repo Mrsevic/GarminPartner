@@ -94,7 +94,7 @@ public partial class MainPage : ContentPage
 
         LogLabel.Text = "Uploading to Garmin Connect...";
         
-        var result = await _workoutService.UploadWorkoutAsync(workout);
+        var result = await _workoutService.UploadWorkoutAsync();
 
         LoadingOverlay.IsVisible = false;
 

@@ -1,6 +1,5 @@
-using YetAnotherGarminConnectClient;
-using YetAnotherGarminConnectClient.Dto;
-using YetAnotherGarminConnectClient.Dto.Garmin;
+using Garmin.Connect;
+using Garmin.Connect.Models;
 
 namespace GarminPartner.Core.Services;
 
@@ -9,66 +8,74 @@ namespace GarminPartner.Core.Services;
 /// </summary>
 public interface IGarminClientFacade
 {
+    IGarminConnectClient _client { get; }
     bool IsOAuthValid { get; }
-    OAuth2Token? OAuth2Token { get; }
-    Task<GarminAuthenciationResult> Authenticate(string email, string password);
-    Task<GarminAuthenciationResult> CompleteMFAAuthAsync(string mfaCode);
-    Task<UploadResponse> UploadActivity(string format, byte[] file);
-    Task SetOAuth2Token(string accessToken, string tokenSecret);
+    Task CreateWorkout(GarminWorkout workout, CancellationToken cancellationToken = default);
+
+    // OAuth2Token? OAuth2Token { get; }
+    // Task<bool> Authenticate(string email, string password);
+    // Task<bool> CompleteMFAAuthAsync(string mfaCode);
+    // Task<bool> UploadActivity(string format, byte[] file);
+    // Task SetOAuth2Token(string accessToken, string tokenSecret);
 }
 
 public class GarminClientFacade : IGarminClientFacade
 {
-    private readonly IClient _client;
-    private DateTime _tokenExpiresAt = DateTime.MinValue;
+    public IGarminConnectClient _client { get; }
 
-    public GarminClientFacade(IClient client)
+    // public readonly IGarminConnectClient _client;
+    // private DateTime _tokenExpiresAt = DateTime.MinValue;
+    private bool _successfulLogin = false;
+
+    public GarminClientFacade(IGarminConnectClient client)
     {
+        _successfulLogin = true;
         _client = client;
     }
-
-    public bool IsOAuthValid => 
-        _client.OAuth2Token != null && 
-        DateTime.UtcNow < _tokenExpiresAt;
-
-    public OAuth2Token? OAuth2Token => _client.OAuth2Token;
-
-    public async Task<GarminAuthenciationResult> Authenticate(string email, string password)
+    
+    public Task CreateWorkout(GarminWorkout workout, CancellationToken cancellationToken = default)
     {
-        var result = await _client.Authenticate(email, password);
-        
-        if (result.IsSuccess && _client.OAuth2Token != null)
-        {
-            _tokenExpiresAt = DateTime.UtcNow.AddSeconds(_client.OAuth2Token.Expires_In);
-        }
-        
-        return result;
+        return _client.UpdateWorkout(workout, cancellationToken);
     }
 
-    public async Task<GarminAuthenciationResult> CompleteMFAAuthAsync(string mfaCode)
-    {
-        var result = await _client.CompleteMFAAuthAsync(mfaCode);
-        
-        if (result.IsSuccess && _client.OAuth2Token != null)
-        {
-            _tokenExpiresAt = DateTime.UtcNow.AddSeconds(_client.OAuth2Token.Expires_In);
-        }
-        
-        return result;
-    }
 
-    public Task<UploadResponse> UploadActivity(string format, byte[] file)
-    {
-        return _client.UploadActivity(format, file);
-    }
+    public bool IsOAuthValid =>
+        _successfulLogin != false;
 
-    public async Task SetOAuth2Token(string accessToken, string tokenSecret)
-    {
-        await _client.SetOAuth2Token(accessToken, tokenSecret);
-        
-        if (_client.OAuth2Token != null)
-        {
-            _tokenExpiresAt = DateTime.UtcNow.AddSeconds(_client.OAuth2Token.Expires_In);
-        }
-    }
+    // public OAuth2Token? OAuth2Token => _client.OAuth2Token;
+
+    // public async Task<bool> Authenticate(string email, string password)
+    // {
+    //     var result = await _client.Authenticate(email, password);
+    //     
+    //     if (result.IsSuccess && _client.OAuth2Token != null)
+    //     {
+    //         _tokenExpiresAt = DateTime.UtcNow.AddSeconds(_client.OAuth2Token.Expires_In);
+    //     }
+    //     
+    //     return result;
+    // }
+    //
+    // public async Task<GarminAuthenciationResult> CompleteMFAAuthAsync(string mfaCode)
+    // {
+    //     var result = await _client.CompleteMFAAuthAsync(mfaCode);
+    //     
+    //     if (result.IsSuccess && _client.OAuth2Token != null)
+    //     {
+    //         _tokenExpiresAt = DateTime.UtcNow.AddSeconds(_client.OAuth2Token.Expires_In);
+    //     }
+    //     
+    //     return result;
+    // }
+
+    // public async Task<bool> UploadActivity(string format, byte[] file)
+    // {
+    //     var lastDeviceUsed = _client.GetDeviceLastUsed();
+    //     var workout = new GarminWorkout()
+    //     {
+    //         WorkoutId = 0,
+    //         
+    //     }
+    // }
+    
 }

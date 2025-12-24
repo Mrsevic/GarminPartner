@@ -1,46 +1,43 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Maui.Storage;
 
 namespace GarminPartner.Core.Services;
 
 public class GarminAuthService
 {
-    private readonly string _configDirectory;
-    private readonly string _authFilePath;
     private readonly HttpClient _httpClient;
-    
-    private const string GarminConnectUrl = "https://connect.garmin.com";
+    private readonly CookieContainer _cookieContainer;
+
     private const string SsoUrl = "https://sso.garmin.com";
+    private const string GarminConnectUrl = "https://connect.garmin.com";
+    private const string PortalLoginUrl = "https://sso.garmin.com/portal/api/login";
+    private const string SsoLoginUrl = "https://sso.garmin.com/sso/login";
+    private const string AuthStorageKey = "garmin_auth_data";
 
     public GarminAuthService()
     {
-        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        _configDirectory = Path.Combine(homeDirectory, ".garminpartner");
-        _authFilePath = Path.Combine(_configDirectory, "auth.json");
-        
-        if (!Directory.Exists(_configDirectory))
-        {
-            Directory.CreateDirectory(_configDirectory);
-        }
+        _cookieContainer = new CookieContainer();
 
-        _httpClient = new HttpClient(new HttpClientHandler
+        var handler = new HttpClientHandler
         {
             UseCookies = true,
-            CookieContainer = new CookieContainer(),
+            CookieContainer = _cookieContainer,
             AutomaticDecompression = DecompressionMethods.All
-        });
+        };
 
+        _httpClient = new HttpClient(handler);
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
     }
 
     public async Task<AuthData?> GetValidAuthAsync()
     {
-        var stored = LoadStoredAuth();
-        
+        var stored = await LoadStoredAuthAsync();
+
         if (stored != null && IsTokenValid(stored))
         {
             return stored;
@@ -53,146 +50,195 @@ public class GarminAuthService
     {
         try
         {
-            Console.WriteLine("🚀 Starting Garmin authentication...");
-            
-            // Step 1: Get CSRF token and initialize session
-            var csrfToken = await GetCsrfTokenAsync();
-            if (string.IsNullOrEmpty(csrfToken))
+            // Step 1: Login via Portal API and get auth ticket
+            var authTicketUrl = await LoginAsync(email, password);
+            if (string.IsNullOrEmpty(authTicketUrl))
             {
-                Console.WriteLine("❌ Failed to get CSRF token");
-                return null;
+                throw new Exception("Failed to obtain authentication ticket");
             }
 
-            // Step 2: Login with credentials
-            var ticket = await LoginAsync(email, password, csrfToken);
-            if (string.IsNullOrEmpty(ticket))
+            // Step 2: Claim the auth ticket
+            await ClaimAuthTicketAsync(authTicketUrl);
+
+            // Step 3: Touch base with main page to complete login ceremony
+            await _httpClient.GetAsync($"{GarminConnectUrl}/modern");
+
+            // Step 4: Set NK header for subsequent requests
+            _httpClient.DefaultRequestHeaders.Remove("NK");
+            _httpClient.DefaultRequestHeaders.Add("NK", "NT");
+
+            // Step 5: Get OAuth token
+            var authToken = await GetOAuthTokenAsync();
+            if (authToken == null)
             {
-                Console.WriteLine("❌ Login failed");
-                return null;
+                throw new Exception("Failed to obtain OAuth token");
             }
 
-            // Step 3: Exchange ticket for OAuth tokens
-            var authData = await ExchangeTicketAsync(ticket);
-            if (authData == null)
+            var authData = new AuthData
             {
-                Console.WriteLine("❌ Failed to get OAuth tokens");
-                return null;
-            }
+                AccessToken = authToken.AccessToken,
+                TokenType = authToken.TokenType,
+                ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(authToken.ExpiresIn).ToUnixTimeSeconds(),
+                IssuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
 
-            // Store authentication data
-            StoreAuth(authData);
-            Console.WriteLine("✅ Authentication successful!");
-            
+            await StoreAuthAsync(authData);
             return authData;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Authentication error: {ex.Message}");
-            return null;
+            throw new InvalidOperationException($"Authentication failed: {ex.Message}", ex);
         }
     }
 
-    private async Task<string> GetCsrfTokenAsync()
+    private async Task<string> LoginAsync(string username, string password)
     {
-        var response = await _httpClient.GetAsync($"{SsoUrl}/sso/signin?service={GarminConnectUrl}");
-        var content = await response.Content.ReadAsStringAsync();
-        
-        // Extract CSRF token from response
-        var match = System.Text.RegularExpressions.Regex.Match(content, @"name=""_csrf""\s+value=""([^""]+)""");
-        return match.Success ? match.Groups[1].Value : string.Empty;
-    }
-
-    private async Task<string> LoginAsync(string email, string password, string csrfToken)
-    {
-        var loginData = new Dictionary<string, string>
+        var headers = new Dictionary<string, string>
         {
-            { "username", email },
-            { "password", password },
-            { "_csrf", csrfToken },
-            { "embed", "false" }
+            { "authority", "sso.garmin.com" },
+            { "origin", SsoUrl },
+            {
+                "referer",
+                $"{SsoUrl}/portal/sso/en-US/sign-in?clientId=GarminConnect&service=https%3A%2F%2Fconnect.garmin.com%2Fmodern"
+            }
         };
 
-        var content = new FormUrlEncodedContent(loginData);
-        var response = await _httpClient.PostAsync($"{SsoUrl}/sso/signin", content);
-        
-        if (!response.IsSuccessStatusCode)
+        foreach (var header in headers)
         {
-            return string.Empty;
+            _httpClient.DefaultRequestHeaders.Remove(header.Key);
+            _httpClient.DefaultRequestHeaders.Add(header.Key, header.Value);
         }
 
-        var responseContent = await response.Content.ReadAsStringAsync();
-        
-        // Extract ticket from response URL or body
-        var ticketMatch = System.Text.RegularExpressions.Regex.Match(
-            responseContent, @"ticket=([^&\s""]+)");
-        
-        return ticketMatch.Success ? ticketMatch.Groups[1].Value : string.Empty;
+        var queryParams = new Dictionary<string, string>
+        {
+            { "clientId", "GarminConnect" },
+            { "service", $"{GarminConnectUrl}/modern/" },
+            { "gauthHost", $"{SsoUrl}/sso" }
+        };
+
+        var loginData = new
+        {
+            username = username,
+            password = password
+        };
+
+        var queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
+        var loginUrl = $"{PortalLoginUrl}?{queryString}";
+
+        var jsonContent = new StringContent(
+            JsonSerializer.Serialize(loginData),
+            Encoding.UTF8,
+            "application/json");
+
+        var response = await _httpClient.PostAsync(loginUrl, jsonContent);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            throw new Exception($"Login failed with status {response.StatusCode}: {errorContent}");
+        }
+
+        var responseText = await response.Content.ReadAsStringAsync();
+
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        var loginResponse = JsonSerializer.Deserialize<LoginResponse>(responseText, jsonOptions);
+
+        if (loginResponse?.ResponseStatus?.Type == "INVALID_USERNAME_PASSWORD")
+        {
+            throw new Exception("Invalid username or password");
+        }
+
+        var serviceUrl = loginResponse?.ServiceURL?.TrimEnd('/');
+        var authTicket = loginResponse?.ServiceTicketId;
+
+        if (string.IsNullOrEmpty(serviceUrl) || string.IsNullOrEmpty(authTicket))
+        {
+            throw new Exception("Failed to extract authentication ticket from response");
+        }
+
+        return $"{serviceUrl}?ticket={authTicket}";
     }
 
-    private async Task<AuthData?> ExchangeTicketAsync(string ticket)
+    private async Task ClaimAuthTicketAsync(string authTicketUrl)
     {
-        var response = await _httpClient.GetAsync(
-            $"{GarminConnectUrl}/modern?ticket={ticket}");
-        
+        // First, bump the login URL
+        var loginParams = new Dictionary<string, string>
+        {
+            { "clientId", "GarminConnect" },
+            { "service", $"{GarminConnectUrl}/modern/" },
+            { "webhost", GarminConnectUrl },
+            { "gateway", "true" },
+            { "generateExtraServiceTicket", "true" },
+            { "generateTwoExtraServiceTickets", "true" }
+        };
+
+        var queryString = string.Join("&", loginParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
+        // await _httpClient.GetAsync($"{SsoLoginUrl}?{queryString}");
+
+        // Now claim the ticket
+        var response = await _httpClient.GetAsync(authTicketUrl);
+
         if (!response.IsSuccessStatusCode)
         {
-            return null;
+            throw new Exception($"Failed to claim auth ticket: {response.StatusCode}");
         }
+    }
 
-        // Make authenticated request to get OAuth token
-        var tokenResponse = await _httpClient.GetAsync(
-            $"{GarminConnectUrl}/modern/auth/token");
-        
-        if (!tokenResponse.IsSuccessStatusCode)
+    private async Task<OAuthToken?> GetOAuthTokenAsync()
+    {
+        var headers = new Dictionary<string, string>
         {
-            return null;
-        }
-
-        var tokenData = await tokenResponse.Content.ReadAsStringAsync();
-        var tokenJson = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(tokenData);
-        
-        if (tokenJson == null || !tokenJson.ContainsKey("access_token"))
-        {
-            return null;
-        }
-
-        var accessToken = tokenJson["access_token"].GetString();
-        var expiresIn = tokenJson.ContainsKey("expires_in") 
-            ? tokenJson["expires_in"].GetInt32() 
-            : 3600;
-
-        return new AuthData
-        {
-            AccessToken = accessToken ?? string.Empty,
-            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn).ToUnixTimeSeconds(),
-            IssuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            { "authority", "connect.garmin.com" },
+            { "origin", GarminConnectUrl },
+            { "referer", $"{GarminConnectUrl}/modern/" }
         };
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{GarminConnectUrl}/modern/di-oauth/exchange");
+
+        foreach (var header in headers)
+        {
+            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            throw new Exception($"OAuth token exchange failed: {response.StatusCode} - {errorContent}");
+        }
+
+        var tokenJson = await response.Content.ReadAsStringAsync();
+        return JsonSerializer.Deserialize<OAuthToken>(tokenJson, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
     }
 
     private bool IsTokenValid(AuthData authData)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var bufferSeconds = 60; // 1 minute buffer
-        
+        var bufferSeconds = 60;
+
         return now + bufferSeconds < authData.ExpiresAt;
     }
 
-    private AuthData? LoadStoredAuth()
+    private async Task<AuthData?> LoadStoredAuthAsync()
     {
         try
         {
-            if (!File.Exists(_authFilePath))
+            var json = await SecureStorage.GetAsync(AuthStorageKey);
+
+            if (string.IsNullOrEmpty(json))
             {
                 return null;
             }
 
-            var encryptedData = File.ReadAllBytes(_authFilePath);
-            var decryptedJson = ProtectedData.Unprotect(
-                encryptedData, 
-                null, 
-                DataProtectionScope.CurrentUser);
-            
-            var json = Encoding.UTF8.GetString(decryptedJson);
             return JsonSerializer.Deserialize<AuthData>(json);
         }
         catch
@@ -201,57 +247,81 @@ public class GarminAuthService
         }
     }
 
-    private void StoreAuth(AuthData authData)
+    private async Task StoreAuthAsync(AuthData authData)
     {
         try
         {
             var json = JsonSerializer.Serialize(authData);
-            var jsonBytes = Encoding.UTF8.GetBytes(json);
-            var encryptedData = ProtectedData.Protect(
-                jsonBytes, 
-                null, 
-                DataProtectionScope.CurrentUser);
-            
-            File.WriteAllBytes(_authFilePath, encryptedData);
-            Console.WriteLine("💾 Authentication data stored securely");
+            await SecureStorage.SetAsync(AuthStorageKey, json);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to store auth: {ex.Message}");
+            throw new InvalidOperationException($"Failed to store auth: {ex.Message}", ex);
         }
     }
 
-    public void ClearAuth()
+    public async Task ClearAuthAsync()
     {
         try
         {
-            if (File.Exists(_authFilePath))
-            {
-                File.Delete(_authFilePath);
-                Console.WriteLine("🗑️ Authentication data cleared");
-            }
+            SecureStorage.Remove(AuthStorageKey);
+            await Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to clear auth: {ex.Message}");
+            throw new InvalidOperationException($"Failed to clear auth: {ex.Message}", ex);
         }
     }
 
     public HttpClient GetAuthenticatedClient(AuthData authData)
     {
         var client = new HttpClient();
-        client.DefaultRequestHeaders.Authorization = 
-            new AuthenticationHeaderValue("Bearer", authData.AccessToken);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue(authData.TokenType, authData.AccessToken);
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
+        client.DefaultRequestHeaders.Add("DI-Backend", "connectapi.garmin.com");
+
         return client;
     }
+}
+
+// Response models
+public class LoginResponse
+{
+    public string? ServiceURL { get; set; }
+    public string? ServiceTicketId { get; set; }
+    public ResponseStatus? ResponseStatus { get; set; }
+}
+
+public class ResponseStatus
+{
+    public string? Type { get; set; }
+    public string? Message { get; set; }
+    public string? HttpStatus { get; set; }
+}
+
+public class OAuthToken
+{
+    public string Scope { get; set; } = string.Empty;
+    public string Jti { get; set; } = string.Empty;
+
+    [JsonPropertyName("access_token")] public string AccessToken { get; set; } = string.Empty;
+
+    [JsonPropertyName("token_type")] public string TokenType { get; set; } = "Bearer";
+
+    [JsonPropertyName("refresh_token")] public string RefreshToken { get; set; } = string.Empty;
+
+    [JsonPropertyName("expires_in")] public int ExpiresIn { get; set; } = 3599;
+
+    [JsonPropertyName("refresh_token_expires_in")]
+    public int RefreshTokenExpiresIn { get; set; } = 7199;
 }
 
 public class AuthData
 {
     public string AccessToken { get; set; } = string.Empty;
+    public string TokenType { get; set; } = "Bearer";
     public long ExpiresAt { get; set; }
     public long IssuedAt { get; set; }
 }

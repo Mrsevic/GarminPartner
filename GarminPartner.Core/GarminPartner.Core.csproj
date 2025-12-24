@@ -8,6 +8,7 @@
 
     <ItemGroup>
       <PackageReference Include="Garmin.FIT.Sdk" Version="21.171.0" />
+<!--      <PackageReference Include="Microsoft.AI.Foundry.Local" Version="0.8.2.1" />-->
     </ItemGroup>
 
     <ItemGroup>
@@ -15,6 +16,12 @@
       <Folder Include="Authentication\" />
       <Folder Include="WorkoutCreation\" />
       <Folder Include="YearOverview\" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Reference Include="Microsoft.Maui.Essentials">
+        <HintPath>..\GarminPartner\bin\Debug\net10.0-maccatalyst\maccatalyst-arm64\GarminPartner.app\Contents\MonoBundle\Microsoft.Maui.Essentials.dll</HintPath>
+      </Reference>
     </ItemGroup>
 
 </Project>

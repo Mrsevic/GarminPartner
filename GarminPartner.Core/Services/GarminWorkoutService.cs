@@ -1,6 +1,8 @@
 using Dynastream.Fit;
 using System.Text;
 using System.Text.Json;
+using DateTime = System.DateTime;
+using File = System.IO.File;
 
 namespace GarminPartner.Core.Services;
 

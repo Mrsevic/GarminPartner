@@ -3,5 +3,6 @@
     <File Path=".gitignore" />
   </Folder>
   <Project Path="GarminPartner.Core/GarminPartner.Core.csproj" />
+  <Project Path="GarminPartner.Tests/GarminPartner.Tests.csproj" />
   <Project Path="GarminPartner/GarminPartner.csproj" />
 </Solution>
